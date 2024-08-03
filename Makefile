@@ -1,13 +1,14 @@
-CC=clang
-CFLAGS=-O3 -g -fomit-frame-pointer -Isrc/libdivsufsort/include -Isrc
-OBJDIR=obj
-LDFLAGS=
+CC ?= clang
+CFLAGS ?= -O3 -g -fomit-frame-pointer
+CFLAGS += -Isrc/libdivsufsort/include -Isrc
+OBJDIR := obj
+LDFLAGS :=
 
 $(OBJDIR)/%.o: src/../%.c
 	@mkdir -p '$(@D)'
 	$(CC) $(CFLAGS) -c $< -o $@
 
-APP := salvador
+APP ?= salvador
 
 OBJS += $(OBJDIR)/src/salvador.o
 OBJS += $(OBJDIR)/src/expand.o
