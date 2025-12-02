@@ -124,6 +124,9 @@ ss_isqrt(saidx_t x) {
   } else if(e >= 8) {
     y = (sqq_table[x >> ((e - 6) - (e & 1))] >> (7 - (e >> 1))) + 1;
   } else {
+    /* When e < 8, x must be < 256 based on the bit logic above,
+       but add explicit check to silence static analysis warnings */
+    if(x >= 256) { return 15; } /* Fallback for invalid input */
     return sqq_table[x] >> 4;
   }
 
