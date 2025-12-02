@@ -328,7 +328,7 @@ tr_introsort(saidx_t *ISA, const saidx_t *ISAd,
              saidx_t *SA, saidx_t *first, saidx_t *last,
              trbudget_t *budget) {
 #define STACK_SIZE TR_STACKSIZE
-  struct { const saidx_t *a; saidx_t *b, *c; saint_t d, e; }stack[STACK_SIZE];
+  struct { const saidx_t *a; saidx_t *b, *c; saint_t d, e; }stack[STACK_SIZE] = {{0}};
   saidx_t *a, *b, *c;
   saidx_t t;
   saidx_t v, x = 0;
