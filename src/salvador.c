@@ -28,9 +28,11 @@
  *
  */
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <sys/timeb.h>
@@ -86,6 +88,44 @@ static long long do_get_time() {
    return nTime;
 }
 
+static int get_file_size(FILE *f, const char *pszFilename, size_t *pSize) {
+   long nSize;
+
+   if (fseek(f, 0, SEEK_END) != 0) {
+      fprintf(stderr, "error seeking '%s'\n", pszFilename);
+      return -1;
+   }
+
+   nSize = ftell(f);
+   if (nSize < 0) {
+      fprintf(stderr, "error getting size of '%s'\n", pszFilename);
+      return -1;
+   }
+
+   if (fseek(f, 0, SEEK_SET) != 0) {
+      fprintf(stderr, "error seeking '%s'\n", pszFilename);
+      return -1;
+   }
+
+   *pSize = (size_t)nSize;
+   return 0;
+}
+
+static unsigned int prng_next(unsigned int *pState) {
+   unsigned int x = *pState;
+
+   x ^= x << 13;
+   x ^= x >> 17;
+   x ^= x << 5;
+
+   if (x == 0) {
+      x = 0x6d2b79f5U;
+   }
+
+   *pState = x;
+   return x;
+}
+
 static void do_reverse_buffer(unsigned char *pBuffer, size_t nBufferSize) {
    size_t nMidPoint = nBufferSize / 2;
    size_t i, j;
@@ -132,9 +172,10 @@ static int do_compress(const char *pszInFilename, const char *pszOutFilename, co
       }
 
       /* Get dictionary size */
-      fseek(f_dict, 0, SEEK_END);
-      nDictionarySize = (size_t)ftell(f_dict);
-      fseek(f_dict, 0, SEEK_SET);
+      if (get_file_size(f_dict, pszDictionaryFilename, &nDictionarySize) != 0) {
+         fclose(f_dict);
+         return 100;
+      }
 
       if (nDictionarySize > BLOCK_SIZE) nDictionarySize = BLOCK_SIZE;
    }
@@ -148,15 +189,24 @@ static int do_compress(const char *pszInFilename, const char *pszOutFilename, co
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nOriginalSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszInFilename, &nOriginalSize) != 0) {
+      fclose(f_in);
+      if (f_dict) fclose(f_dict);
+      return 100;
+   }
+
+   if (nOriginalSize > SIZE_MAX - nDictionarySize) {
+      fclose(f_in);
+      if (f_dict) fclose(f_dict);
+      fprintf(stderr, "input size too large for '%s'\n", pszInFilename);
+      return 100;
+   }
 
    pDecompressedData = (unsigned char*)malloc(nDictionarySize + nOriginalSize);
    if (!pDecompressedData) {
       fclose(f_in);
       if (f_dict) fclose(f_dict);
-      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszInFilename, nOriginalSize);
+      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszInFilename, nDictionarySize + nOriginalSize);
       return 100;
    }
 
@@ -295,9 +345,10 @@ static int do_decompress(const char *pszInFilename, const char *pszOutFilename, 
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nCompressedSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszInFilename, &nCompressedSize) != 0) {
+      fclose(f_in);
+      return 100;
+   }
 
    pCompressedData = (unsigned char*)malloc(nCompressedSize);
    if (!pCompressedData) {
@@ -334,25 +385,35 @@ static int do_decompress(const char *pszInFilename, const char *pszOutFilename, 
       /* Open the dictionary */
       f_dict = fopen(pszDictionaryFilename, "rb");
       if (!f_dict) {
+         free(pCompressedData);
          fprintf(stderr, "error opening dictionary '%s' for reading\n", pszDictionaryFilename);
          return 100;
       }
 
       /* Get dictionary size */
-      fseek(f_dict, 0, SEEK_END);
-      nDictionarySize = (size_t)ftell(f_dict);
-      fseek(f_dict, 0, SEEK_SET);
+      if (get_file_size(f_dict, pszDictionaryFilename, &nDictionarySize) != 0) {
+         free(pCompressedData);
+         fclose(f_dict);
+         return 100;
+      }
 
       if (nDictionarySize > BLOCK_SIZE) nDictionarySize = BLOCK_SIZE;
    }
 
    /* Allocate max decompressed size */
 
+   if (nMaxDecompressedSize > SIZE_MAX - nDictionarySize) {
+      free(pCompressedData);
+      if (f_dict) fclose(f_dict);
+      fprintf(stderr, "decompressed size too large for '%s'\n", pszInFilename);
+      return 100;
+   }
+
    pDecompressedData = (unsigned char*)malloc(nDictionarySize + nMaxDecompressedSize);
    if (!pDecompressedData) {
       free(pCompressedData);
       if (f_dict) fclose(f_dict);
-      fprintf(stderr, "out of memory for decompressing '%s', %zu bytes needed\n", pszInFilename, nMaxDecompressedSize);
+      fprintf(stderr, "out of memory for decompressing '%s', %zu bytes needed\n", pszInFilename, nDictionarySize + nMaxDecompressedSize);
       return 100;
    }
 
@@ -362,6 +423,7 @@ static int do_decompress(const char *pszInFilename, const char *pszOutFilename, 
       /* Read dictionary data */
       if (fread(pDecompressedData, 1, nDictionarySize, f_dict) != nDictionarySize) {
          free(pDecompressedData);
+         free(pCompressedData);
          fclose(f_dict);
          fprintf(stderr, "I/O error while reading dictionary '%s'\n", pszDictionaryFilename);
          return 100;
@@ -423,7 +485,7 @@ static int do_decompress(const char *pszInFilename, const char *pszOutFilename, 
 
 /*---------------------------------------------------------------------------*/
 
-static int do_compare(const char *pszInFilename, const char *pszOutFilename, const char *pszDictionaryFilename, const unsigned int nOptions) {
+static int do_compare(const char *pszCompressedFilename, const char *pszOriginalFilename, const char *pszDictionaryFilename, const unsigned int nOptions) {
    long long nStartTime = 0LL, nEndTime = 0LL;
    size_t nCompressedSize, nMaxDecompressedSize, nOriginalSize, nDecompressedSize;
    unsigned char *pCompressedData = NULL;
@@ -436,27 +498,28 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
 
    /* Read the whole compressed file in memory */
 
-   FILE *f_in = fopen(pszInFilename, "rb");
+   FILE *f_in = fopen(pszCompressedFilename, "rb");
    if (!f_in) {
-      fprintf(stderr, "error opening '%s' for reading\n", pszInFilename);
+      fprintf(stderr, "error opening '%s' for reading\n", pszCompressedFilename);
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nCompressedSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszCompressedFilename, &nCompressedSize) != 0) {
+      fclose(f_in);
+      return 100;
+   }
 
    pCompressedData = (unsigned char*)malloc(nCompressedSize);
    if (!pCompressedData) {
       fclose(f_in);
-      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszInFilename, nCompressedSize);
+      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszCompressedFilename, nCompressedSize);
       return 100;
    }
 
    if (fread(pCompressedData, 1, nCompressedSize, f_in) != nCompressedSize) {
       free(pCompressedData);
       fclose(f_in);
-      fprintf(stderr, "I/O error while reading '%s'\n", pszInFilename);
+      fprintf(stderr, "I/O error while reading '%s'\n", pszCompressedFilename);
       return 100;
    }
 
@@ -468,22 +531,24 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
 
    /* Read the whole original file in memory */
 
-   f_in = fopen(pszOutFilename, "rb");
+   f_in = fopen(pszOriginalFilename, "rb");
    if (!f_in) {
       free(pCompressedData);
-      fprintf(stderr, "error opening '%s' for reading\n", pszInFilename);
+      fprintf(stderr, "error opening '%s' for reading\n", pszOriginalFilename);
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nOriginalSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszOriginalFilename, &nOriginalSize) != 0) {
+      fclose(f_in);
+      free(pCompressedData);
+      return 100;
+   }
 
    pOriginalData = (unsigned char*)malloc(nOriginalSize);
    if (!pOriginalData) {
       fclose(f_in);
       free(pCompressedData);
-      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszInFilename, nOriginalSize);
+      fprintf(stderr, "out of memory for reading '%s', %zu bytes needed\n", pszOriginalFilename, nOriginalSize);
       return 100;
    }
 
@@ -491,7 +556,7 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
       free(pOriginalData);
       fclose(f_in);
       free(pCompressedData);
-      fprintf(stderr, "I/O error while reading '%s'\n", pszInFilename);
+      fprintf(stderr, "I/O error while reading '%s'\n", pszOriginalFilename);
       return 100;
    }
 
@@ -504,7 +569,7 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
    if (nMaxDecompressedSize == (size_t)-1) {
       free(pOriginalData);
       free(pCompressedData);
-      fprintf(stderr, "invalid compressed format for file '%s'\n", pszInFilename);
+      fprintf(stderr, "invalid compressed format for file '%s'\n", pszCompressedFilename);
       return 100;
    }
 
@@ -521,21 +586,32 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
       }
 
       /* Get dictionary size */
-      fseek(f_dict, 0, SEEK_END);
-      nDictionarySize = (size_t)ftell(f_dict);
-      fseek(f_dict, 0, SEEK_SET);
+      if (get_file_size(f_dict, pszDictionaryFilename, &nDictionarySize) != 0) {
+         free(pOriginalData);
+         free(pCompressedData);
+         fclose(f_dict);
+         return 100;
+      }
 
       if (nDictionarySize > BLOCK_SIZE) nDictionarySize = BLOCK_SIZE;
    }
 
    /* Allocate max decompressed size */
 
+   if (nMaxDecompressedSize > SIZE_MAX - nDictionarySize) {
+      free(pOriginalData);
+      free(pCompressedData);
+      if (f_dict) fclose(f_dict);
+      fprintf(stderr, "decompressed size too large for '%s'\n", pszCompressedFilename);
+      return 100;
+   }
+
    pDecompressedData = (unsigned char*)malloc(nDictionarySize + nMaxDecompressedSize);
    if (!pDecompressedData) {
       free(pOriginalData);
       free(pCompressedData);
       if (f_dict) fclose(f_dict);
-      fprintf(stderr, "out of memory for decompressing '%s', %zu bytes needed\n", pszInFilename, nMaxDecompressedSize);
+      fprintf(stderr, "out of memory for decompressing '%s', %zu bytes needed\n", pszCompressedFilename, nDictionarySize + nMaxDecompressedSize);
       return 100;
    }
 
@@ -569,7 +645,7 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
       free(pOriginalData);
       free(pCompressedData);
 
-      fprintf(stderr, "decompression error for '%s'\n", pszInFilename);
+      fprintf(stderr, "decompression error for '%s'\n", pszCompressedFilename);
       return 100;
    }
 
@@ -585,7 +661,7 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
       free(pOriginalData);
       free(pCompressedData);
 
-      fprintf(stderr, "error comparing compressed file '%s' with original '%s'\n", pszInFilename, pszOutFilename);
+      fprintf(stderr, "error comparing compressed file '%s' with original '%s'\n", pszCompressedFilename, pszOriginalFilename);
       return 100;
    }
 
@@ -597,7 +673,7 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
       double fDelta = ((double)(nEndTime - nStartTime)) / 1000000.0;
       double fSpeed = ((double)nOriginalSize / 1048576.0) / fDelta;
       fprintf(stdout, "Compared '%s' in %g seconds, %g Mb/s\n",
-         pszInFilename, fDelta, fSpeed);
+         pszCompressedFilename, fDelta, fSpeed);
    }
 
    return 0;
@@ -608,23 +684,22 @@ static int do_compare(const char *pszInFilename, const char *pszOutFilename, con
 static void generate_compressible_data(unsigned char *pBuffer, size_t nBufferSize, unsigned int nSeed, int nNumLiteralValues, float fMatchProbability) {
    size_t nIndex = 0;
    int nMatchProbability = (int)(fMatchProbability * 1023.0f);
+   unsigned int nPrngState = nSeed ? nSeed : 0x6d2b79f5U;
 
-   srand(nSeed);
-   
    if (nBufferSize == 0) return;
-   pBuffer[nIndex++] = rand() % nNumLiteralValues;
+   pBuffer[nIndex++] = prng_next(&nPrngState) % nNumLiteralValues;
 
    while (nIndex < nBufferSize) {
-      if ((rand() & 1023) >= nMatchProbability) {
-         size_t nLiteralCount = rand() & 127;
+      if ((prng_next(&nPrngState) & 1023) >= nMatchProbability) {
+         size_t nLiteralCount = prng_next(&nPrngState) & 127;
          if (nLiteralCount > (nBufferSize - nIndex))
             nLiteralCount = nBufferSize - nIndex;
 
          while (nLiteralCount--)
-            pBuffer[nIndex++] = rand() % nNumLiteralValues;
+            pBuffer[nIndex++] = prng_next(&nPrngState) % nNumLiteralValues;
       }
       else {
-         size_t nMatchLength = MIN_MATCH_SIZE + (rand() & 1023);
+         size_t nMatchLength = MIN_MATCH_SIZE + (prng_next(&nPrngState) & 1023);
          size_t nMatchOffset;
 
          if (nMatchLength > (nBufferSize - nIndex))
@@ -633,7 +708,7 @@ static void generate_compressible_data(unsigned char *pBuffer, size_t nBufferSiz
             nMatchLength = nIndex;
 
          if (nMatchLength < nIndex)
-            nMatchOffset = rand() % (nIndex - nMatchLength);
+            nMatchOffset = prng_next(&nPrngState) % (nIndex - nMatchLength);
          else
             nMatchOffset = 0;
 
@@ -648,11 +723,10 @@ static void generate_compressible_data(unsigned char *pBuffer, size_t nBufferSiz
 static void xor_data(unsigned char *pBuffer, size_t nBufferSize, unsigned int nSeed, float fXorProbability) {
    size_t nIndex = 0;
    int nXorProbability = (int)(fXorProbability * 1023.0f);
-
-   srand(nSeed);
+   unsigned int nPrngState = nSeed ? nSeed : 0x6d2b79f5U;
 
    while (nIndex < nBufferSize) {
-      if ((rand() & 1023) < nXorProbability) {
+      if ((prng_next(&nPrngState) & 1023) < nXorProbability) {
          pBuffer[nIndex] ^= 0xff;
       }
       nIndex++;
@@ -849,9 +923,10 @@ static int do_compr_benchmark(const char *pszInFilename, const char *pszOutFilen
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nFileSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszInFilename, &nFileSize) != 0) {
+      fclose(f_in);
+      return 100;
+   }
 
    pFileData = (unsigned char*)malloc(nFileSize);
    if (!pFileData) {
@@ -982,9 +1057,10 @@ static int do_dec_benchmark(const char *pszInFilename, const char *pszOutFilenam
       return 100;
    }
 
-   fseek(f_in, 0, SEEK_END);
-   nFileSize = (size_t)ftell(f_in);
-   fseek(f_in, 0, SEEK_SET);
+   if (get_file_size(f_in, pszInFilename, &nFileSize) != 0) {
+      fclose(f_in);
+      return 100;
+   }
 
    pFileData = (unsigned char*)malloc(nFileSize);
    if (!pFileData) {
