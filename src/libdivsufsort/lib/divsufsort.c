@@ -59,13 +59,23 @@ sort_typeBstar(const sauchar_t *T, saidx_t *SA,
      type B* suffixes into the array SA. */
   for(i = n - 1, m = n, c0 = T[n - 1]; 0 <= i;) {
     /* type A suffix. */
-    do { ++BUCKET_A(c1 = c0); } while((0 <= --i) && ((c0 = T[i]) >= c1));
+    do {
+      c1 = c0;
+      /* Sanitize c1 from T[] to satisfy static analysis */
+      assert((0 <= c1) && (c1 < ALPHABET_SIZE));
+      ++BUCKET_A(c1);
+    } while((0 <= --i) && ((c0 = T[i]) >= c1));
     if(0 <= i) {
       /* type B* suffix. */
+      /* Sanitize c0, c1 from T[] to satisfy static analysis */
+      assert((0 <= c0) && (c0 < ALPHABET_SIZE));
+      assert((0 <= c1) && (c1 < ALPHABET_SIZE));
       ++BUCKET_BSTAR(c0, c1);
       SA[--m] = i;
       /* type B suffix. */
       for(--i, c1 = c0; (0 <= i) && ((c0 = T[i]) <= c1); --i, c1 = c0) {
+        assert((0 <= c0) && (c0 < ALPHABET_SIZE));
+        assert((0 <= c1) && (c1 < ALPHABET_SIZE));
         ++BUCKET_B(c0, c1);
       }
     }
@@ -79,10 +89,13 @@ note:
 
   /* Calculate the index of start/end point of each bucket. */
   for(c0 = 0, i = 0, j = 0; c0 < ALPHABET_SIZE; ++c0) {
+    /* Ensure c0 is within valid range to satisfy static analysis */
+    assert((0 <= c0) && (c0 < ALPHABET_SIZE));
     t = i + BUCKET_A(c0);
     BUCKET_A(c0) = i + j; /* start point */
     i = t + BUCKET_B(c0, c0);
     for(c1 = c0 + 1; c1 < ALPHABET_SIZE; ++c1) {
+      assert((0 <= c1) && (c1 < ALPHABET_SIZE));
       j += BUCKET_BSTAR(c0, c1);
       BUCKET_BSTAR(c0, c1) = j; /* end point */
       i += BUCKET_B(c0, c1);
@@ -94,9 +107,15 @@ note:
     PAb = SA + n - m; ISAb = SA + m;
     for(i = m - 2; 0 <= i; --i) {
       t = PAb[i], c0 = T[t], c1 = T[t + 1];
+      /* Sanitize c0, c1 from T[] to satisfy static analysis */
+      assert((0 <= c0) && (c0 < ALPHABET_SIZE));
+      assert((0 <= c1) && (c1 < ALPHABET_SIZE));
       SA[--BUCKET_BSTAR(c0, c1)] = i;
     }
     t = PAb[m - 1], c0 = T[t], c1 = T[t + 1];
+    /* Sanitize c0, c1 from T[] to satisfy static analysis */
+    assert((0 <= c0) && (c0 < ALPHABET_SIZE));
+    assert((0 <= c1) && (c1 < ALPHABET_SIZE));
     SA[--BUCKET_BSTAR(c0, c1)] = m - 1;
 
     /* Sort the type B* substrings using sssort. */
@@ -171,8 +190,11 @@ note:
     /* Calculate the index of start/end point of each bucket. */
     BUCKET_B(ALPHABET_SIZE - 1, ALPHABET_SIZE - 1) = n; /* end point */
     for(c0 = ALPHABET_SIZE - 2, k = m - 1; 0 <= c0; --c0) {
+      /* Ensure c0 is within valid range to satisfy static analysis */
+      assert((0 <= c0) && (c0 < ALPHABET_SIZE));
       i = BUCKET_A(c0 + 1) - 1;
       for(c1 = ALPHABET_SIZE - 1; c0 < c1; --c1) {
+        assert((0 <= c1) && (c1 < ALPHABET_SIZE));
         t = i - BUCKET_B(c0, c1);
         BUCKET_B(c0, c1) = i; /* end point */
 
