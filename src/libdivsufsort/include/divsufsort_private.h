@@ -176,13 +176,15 @@ extern "C" {
     (_c) = stack[ssize].c, (_d) = stack[ssize].d, (_e) = stack[ssize].e;\
   } while(0)
 /* for divsufsort.c */
-#define BUCKET_A(_c0) bucket_A[(_c0)]
+/* Mask values to 0-255 range to satisfy static analysis (values from T[] are
+   already unsigned char, but analyzers may not recognize this) */
+#define BUCKET_A(_c0) bucket_A[((_c0) & 0xFF)]
 #if ALPHABET_SIZE == 256
-#define BUCKET_B(_c0, _c1) (bucket_B[((_c1) << 8) | (_c0)])
-#define BUCKET_BSTAR(_c0, _c1) (bucket_B[((_c0) << 8) | (_c1)])
+#define BUCKET_B(_c0, _c1) (bucket_B[(((_c1) & 0xFF) << 8) | ((_c0) & 0xFF)])
+#define BUCKET_BSTAR(_c0, _c1) (bucket_B[(((_c0) & 0xFF) << 8) | ((_c1) & 0xFF)])
 #else
-#define BUCKET_B(_c0, _c1) (bucket_B[(_c1) * ALPHABET_SIZE + (_c0)])
-#define BUCKET_BSTAR(_c0, _c1) (bucket_B[(_c0) * ALPHABET_SIZE + (_c1)])
+#define BUCKET_B(_c0, _c1) (bucket_B[((_c1) & 0xFF) * ALPHABET_SIZE + ((_c0) & 0xFF)])
+#define BUCKET_BSTAR(_c0, _c1) (bucket_B[((_c0) & 0xFF) * ALPHABET_SIZE + ((_c1) & 0xFF)])
 #endif
 
 
