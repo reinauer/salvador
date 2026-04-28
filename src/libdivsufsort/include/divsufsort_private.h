@@ -176,16 +176,27 @@ extern "C" {
     (_c) = stack[ssize].c, (_d) = stack[ssize].d, (_e) = stack[ssize].e;\
   } while(0)
 /* for divsufsort.c */
-/* Mask values to 0-255 range to satisfy static analysis (values from T[] are
-   already unsigned char, but analyzers may not recognize this) */
-#define BUCKET_A(_c0) bucket_A[((_c0) & 0xFF)]
-#if ALPHABET_SIZE == 256
-#define BUCKET_B(_c0, _c1) (bucket_B[(((_c1) & 0xFF) << 8) | ((_c0) & 0xFF)])
-#define BUCKET_BSTAR(_c0, _c1) (bucket_B[(((_c0) & 0xFF) << 8) | ((_c1) & 0xFF)])
-#else
-#define BUCKET_B(_c0, _c1) (bucket_B[((_c1) & 0xFF) * ALPHABET_SIZE + ((_c0) & 0xFF)])
-#define BUCKET_BSTAR(_c0, _c1) (bucket_B[((_c0) & 0xFF) * ALPHABET_SIZE + ((_c1) & 0xFF)])
-#endif
+static inline saidx_t
+bucket_char_index(saint_t c) {
+  assert((0 <= c) && (c < ALPHABET_SIZE));
+  if(c < 0) { return 0; }
+  if(ALPHABET_SIZE <= c) { return ALPHABET_SIZE - 1; }
+  return (saidx_t)c;
+}
+
+static inline saidx_t
+bucket_b_index(saint_t c0, saint_t c1) {
+  return (bucket_char_index(c1) * ALPHABET_SIZE) + bucket_char_index(c0);
+}
+
+static inline saidx_t
+bucket_bstar_index(saint_t c0, saint_t c1) {
+  return (bucket_char_index(c0) * ALPHABET_SIZE) + bucket_char_index(c1);
+}
+
+#define BUCKET_A(_c0) bucket_A[bucket_char_index(_c0)]
+#define BUCKET_B(_c0, _c1) bucket_B[bucket_b_index((_c0), (_c1))]
+#define BUCKET_BSTAR(_c0, _c1) bucket_B[bucket_bstar_index((_c0), (_c1))]
 
 
 /*- Private Prototypes -*/
